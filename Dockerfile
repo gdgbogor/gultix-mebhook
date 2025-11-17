@@ -1,37 +1,38 @@
-# Build stage
+# Optimized Dockerfile for faster builds
 FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-# Copy go mod and sum files
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Copy go mod files first for better layer caching
 COPY go.mod go.sum ./
 
-# Download dependencies
-RUN go mod download
+# Download dependencies (cached layer if go.mod/go.sum unchanged)
+RUN go mod download && go mod verify
 
-# Copy source code
-COPY . .
+# Copy only necessary source files
+COPY main.go ./
 
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o pretix-webhook .
+# Build with optimizations for smaller binary and faster build
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags='-w -s -extldflags "-static"' \
+    -a -installsuffix cgo \
+    -o pretix-webhook .
 
-# Final stage
-FROM alpine:latest
+# Final stage - use distroless for smaller image
+FROM gcr.io/distroless/static-debian12:nonroot
 
-# Install ca-certificates for HTTPS requests
-RUN apk --no-cache add ca-certificates
+# Copy ca-certificates and timezone data from builder
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
-WORKDIR /root/
-
-# Copy the binary from builder stage
-COPY --from=builder /app/pretix-webhook .
-
-# Create a non-root user
-RUN adduser -D -s /bin/sh appuser
-USER appuser
+# Copy binary
+COPY --from=builder /app/pretix-webhook /usr/local/bin/pretix-webhook
 
 # Expose port
 EXPOSE 8080
 
-# Run the binary
-CMD ["./pretix-webhook"]
+# Run as non-root user (distroless nonroot)
+ENTRYPOINT ["/usr/local/bin/pretix-webhook"]
