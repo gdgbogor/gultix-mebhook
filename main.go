@@ -21,15 +21,13 @@ type PretixWebhook struct {
 	NotificationID int    `json:"notification_id"`
 	Organizer      string `json:"organizer"`
 	Event          string `json:"event"`
-	Code           string `json:"code"`
+	Code           string `json:"code"` // Order code is at top level
 	Action         string `json:"action"`
-	Data           struct {
-		Code   string `json:"code"`
-		Status string `json:"status"`
-		Email  string `json:"email"`
-		Total  string `json:"total"`
-		Secret string `json:"secret"`
-	} `json:"data"`
+	// Additional fields that might come in different webhook types
+	Status string `json:"status,omitempty"` // Sometimes present
+	Email  string `json:"email,omitempty"`  // Sometimes present
+	Total  string `json:"total,omitempty"`  // Sometimes present
+	Secret string `json:"secret,omitempty"` // Sometimes present
 }
 
 type Config struct {
@@ -110,7 +108,7 @@ func handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Received webhook: organizer=%s, event=%s, action=%s, order=%s, status=%s",
-		webhook.Organizer, webhook.Event, webhook.Action, webhook.Data.Code, webhook.Data.Status)
+		webhook.Organizer, webhook.Event, webhook.Action, webhook.Code, webhook.Status)
 
 	if err := sendFCMNotification(webhook); err != nil {
 		log.Printf("Error sending FCM notification: %v", err)
@@ -126,9 +124,12 @@ func sendFCMNotification(webhook PretixWebhook) error {
 	ctx := context.Background()
 
 	title := fmt.Sprintf("Order %s", formatAction(webhook.Action))
-	body := fmt.Sprintf("Order %s from %s - %s", webhook.Data.Code, webhook.Event, webhook.Data.Status)
-	if webhook.Data.Total != "" {
-		body += fmt.Sprintf(" (Total: %s)", webhook.Data.Total)
+	body := fmt.Sprintf("Order %s from %s", webhook.Code, webhook.Event)
+	if webhook.Status != "" {
+		body += fmt.Sprintf(" - %s", webhook.Status)
+	}
+	if webhook.Total != "" {
+		body += fmt.Sprintf(" (Total: %s)", webhook.Total)
 	}
 
 	message := &messaging.Message{
@@ -138,13 +139,14 @@ func sendFCMNotification(webhook PretixWebhook) error {
 			Body:  body,
 		},
 		Data: map[string]string{
-			"organizer":  webhook.Organizer,
-			"event":      webhook.Event,
-			"action":     webhook.Action,
-			"order_code": webhook.Data.Code,
-			"status":     webhook.Data.Status,
-			"total":      webhook.Data.Total,
-			"email":      webhook.Data.Email,
+			"notification_id": fmt.Sprintf("%d", webhook.NotificationID),
+			"organizer":       webhook.Organizer,
+			"event":           webhook.Event,
+			"action":          webhook.Action,
+			"order_code":      webhook.Code,
+			"status":          webhook.Status,
+			"total":           webhook.Total,
+			"email":           webhook.Email,
 		},
 	}
 
